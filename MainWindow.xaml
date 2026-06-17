@@ -1,0 +1,19 @@
+﻿<Window x:Class="CoilOptimizer.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:CoilOptimizer"
+        mc:Ignorable="d"
+        xmlns:ui="clr-namespace:CoilOptimizer.UI"
+        Title="MainWindow" Height="450" Width="800">
+    <Grid>
+        <Button Content="Button" HorizontalAlignment="Left" Margin="5,0,0,0" VerticalAlignment="Top" Height="28" Width="58" Click="Button_Click"/>
+        <StackPanel Orientation="Horizontal" Margin="100,10,0,0" HorizontalAlignment="Left" VerticalAlignment="Top">
+            <RadioButton Name="Job1" Content="Job 1" GroupName="TestGroup" Margin="10,0" Checked="Button_Click"/>
+            <RadioButton Name="Job2" Content="Job 2" GroupName="TestGroup" Margin="10,0" Checked="Button_Click"/>
+            <RadioButton Name="Job3" Content="Job 3" GroupName="TestGroup" Margin="10,0" Checked="Button_Click"/>
+        </StackPanel>
+        <ui:LayoutView x:Name="layoutView" Margin="0,30,0,0" HorizontalAlignment="Stretch" />
+    </Grid>
+</Window>
