@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 
 namespace CoilOptimizer.UI
 {
@@ -11,33 +12,44 @@ namespace CoilOptimizer.UI
     {
         private LayoutVM Vm => DataContext as LayoutVM;
 
-        private LayoutShape _hit;       // shape under mouse-down
-        private LayoutShape _drag;      // shape actively dragging
-        private Point _startScreen;     // pixel-space anchor
-        private Point _startInch;       // inch-space anchor (Surface coords)
-        private double _origX, _origY;  // shape inch origin
-        private const double DragThreshold = 4.0; // px
+        private LayoutShape _hit, _drag;
+        private Point _startScreen, _startInch;
+        private double _origX, _origY;
+        private const double DragThreshold = 4.0;
 
-        public LayoutView() { InitializeComponent(); }
+        public LayoutView()
+        {
+            InitializeComponent();
+            Loaded += OnLoaded;
+        }
+
+        // Fixes "tiny until first resize": ViewportWidth/Height aren't valid
+        // until the ScrollViewer has arranged its content, so push one update
+        // after the initial layout pass.
+        private void OnLoaded(object sender, RoutedEventArgs e)
+        {
+            Dispatcher.BeginInvoke(new Action(UpdateViewport),
+                                   DispatcherPriority.Loaded);
+        }
 
         private void Scroller_SizeChanged(object sender, SizeChangedEventArgs e)
+            => UpdateViewport();
+
+        private void UpdateViewport()
         {
-            Vm?.SetViewport(Scroller.ViewportWidth, Scroller.ViewportHeight);
+            double w = Scroller.ViewportWidth > 0 ? Scroller.ViewportWidth : Scroller.ActualWidth;
+            double h = Scroller.ViewportHeight > 0 ? Scroller.ViewportHeight : Scroller.ActualHeight;
+            Vm?.SetViewport(w, h);
         }
 
         private void Surface_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             if (Vm == null) return;
-
-            _hit = HitTestShape(e.GetPosition(Surface));  // inch-space point
+            _hit = HitTestShape(e.GetPosition(Surface));
             _drag = null;
             _startScreen = e.GetPosition(this);
             _startInch = e.GetPosition(Surface);
-
-            if (_hit != null && Vm.EditMode)
-            {
-                _origX = _hit.X; _origY = _hit.Y;
-            }
+            if (_hit != null && Vm.EditMode) { _origX = _hit.X; _origY = _hit.Y; }
             Surface.CaptureMouse();
         }
 
@@ -51,12 +63,12 @@ namespace CoilOptimizer.UI
             {
                 if (Math.Abs(screen.X - _startScreen.X) < DragThreshold &&
                     Math.Abs(screen.Y - _startScreen.Y) < DragThreshold)
-                    return;                 // still a click, not a drag yet
+                    return;
                 _drag = _hit;
-                _drag.ZIndex = 1000;        // bring to front while dragging
+                _drag.ZIndex = 1000;      // bring to front
             }
 
-            var p = e.GetPosition(Surface); // inch space (LayoutTransform applied)
+            var p = e.GetPosition(Surface);
             _drag.X = _origX + (p.X - _startInch.X);
             _drag.Y = _origY + (p.Y - _startInch.Y);
         }
@@ -68,20 +80,18 @@ namespace CoilOptimizer.UI
 
             if (_drag != null)
             {
-                _drag.ZIndex = 0;           // send back
+                _drag.ZIndex = 0;         // send back
                 double cx = _drag.X + _drag.Width / 2;
                 double cy = _drag.Y + _drag.Height / 2;
-                Vm.DropPart(_drag, cx, cy); // rebuilds layout
+                Vm.DropPart(_drag, cx, cy);
                 _drag = null; _hit = null;
                 return;
             }
 
-            // not a drag => a click
-            if (_hit != null)
-                Vm.SelectPart(_hit);
+            if (_hit != null) Vm.SelectPart(_hit);
             else
             {
-                var p = e.GetPosition(Surface); // inches
+                var p = e.GetPosition(Surface);
                 Vm.SelectGapAt(p.X, p.Y);
             }
             _hit = null;

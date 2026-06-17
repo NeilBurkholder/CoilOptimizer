@@ -22,10 +22,10 @@
                           IsChecked="{Binding EditMode, Mode=TwoWay}"
                           Padding="8,2" Margin="0,0,12,0"/>
             <TextBlock Text="Fit" VerticalAlignment="Center" Margin="0,0,4,0"/>
+            <!-- Slider stays enabled in both modes -->
             <Slider Width="180" VerticalAlignment="Center"
                     Minimum="{Binding ZoomMin}" Maximum="{Binding ZoomMax}"
                     Value="{Binding Zoom, Mode=TwoWay}"
-                    IsEnabled="{Binding ZoomEnabled}"
                     TickFrequency="0.05" IsSnapToTickEnabled="False"/>
             <TextBlock Text="1:1" VerticalAlignment="Center" Margin="4,0,0,0"/>
         </StackPanel>
@@ -47,7 +47,7 @@
                     <ScaleTransform ScaleX="{Binding ScaleX}" ScaleY="{Binding ScaleY}" />
                 </Grid.LayoutTransform>
 
-                <!-- offcut (gap) highlight -->
+                <!-- offcut highlight -->
                 <Canvas IsHitTestVisible="False">
                     <Rectangle Canvas.Left="{Binding GapX}" Canvas.Top="{Binding GapY}"
                                Width="{Binding GapW}" Height="{Binding GapH}"
@@ -59,11 +59,11 @@
                     </Rectangle>
                 </Canvas>
 
-                <!-- parts (wheat) -->
-                <ItemsControl ItemsSource="{Binding Shapes}">
+                <!-- parts -->
+                <ItemsControl ItemsSource="{Binding Shapes}" ClipToBounds="False">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
-                            <Canvas />
+                            <Canvas ClipToBounds="False"/>
                         </ItemsPanelTemplate>
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemContainerStyle>
@@ -75,15 +75,16 @@
                     </ItemsControl.ItemContainerStyle>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <Grid Width="{Binding Width}" Height="{Binding Height}" Tag="{Binding}"
-                                  ToolTip="{Binding Label}" ClipToBounds="True">
-                                <Rectangle Fill="{Binding Fill}" Stroke="#80000000"
+                            <!-- NOTE: no ClipToBounds, so the (visually tiny) label
+                                 is never clipped by narrow strips. -->
+                            <Grid Width="{Binding Width}" Height="{Binding Height}" ClipToBounds="False"
+                                  Tag="{Binding}" ToolTip="{Binding Label}">
+                                <Rectangle Fill="{Binding Fill}" Stroke="#FF000000"
                                     StrokeThickness="{Binding DataContext.HairlineThickness,
                                         RelativeSource={RelativeSource AncestorType=UserControl}}" />
-                                <!-- inverse transform keeps text constant + undistorted -->
-                                <TextBlock Text="{Binding Label}" IsHitTestVisible="False"
-                                           HorizontalAlignment="Center" VerticalAlignment="Center"
-                                           FontSize="11" RenderTransformOrigin="0.5,0.5">
+                                <TextBlock Text="{Binding Label}" IsHitTestVisible="False" Padding="0" Margin="0" MinHeight="1"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" LineStackingStrategy="BlockLineHeight" LineHeight="1" 
+                                           FontSize="11" RenderTransformOrigin="0.5,0.6">
                                     <TextBlock.RenderTransform>
                                         <ScaleTransform
                                             ScaleX="{Binding DataContext.InvScaleX,
@@ -97,7 +98,7 @@
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
 
-                <!-- slits (horizontal black) -->
+                <!-- slits -->
                 <ItemsControl ItemsSource="{Binding SlitLines}" IsHitTestVisible="False">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
@@ -116,7 +117,7 @@
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
 
-                <!-- shears (vertical red) -->
+                <!-- shears -->
                 <ItemsControl ItemsSource="{Binding ShearLines}" IsHitTestVisible="False">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>

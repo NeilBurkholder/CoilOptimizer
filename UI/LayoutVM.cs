@@ -35,7 +35,6 @@ namespace CoilOptimizer.UI
         public void Execute(object p) => _e();
     }
 
-    /// <summary>One physical strip in a column (inches). Unique instance per lane.</summary>
     public class LanePart
     {
         public double Width;
@@ -43,15 +42,14 @@ namespace CoilOptimizer.UI
         public LanePart Clone() => new LanePart { Width = Width, Length = Length };
     }
 
-    /// <summary>A shear row = vertical band along the coil length (inches).</summary>
     public class Col
     {
-        public double Length;                 // band length along coil
+        public double Length;
         public List<LanePart> Lanes = new List<LanePart>();
+        public bool LastIsManual;             // last lane needs a manual side cut
         public double UsedWidth => Lanes.Sum(l => l.Width);
     }
 
-    /// <summary>A drawn part rectangle. Coordinates in INCHES.</summary>
     public class LayoutShape : ObservableObject
     {
         private double _x, _y, _w, _h;
@@ -64,7 +62,8 @@ namespace CoilOptimizer.UI
         public int ZIndex { get => _z; set => Set(ref _z, value); }
         public Brush Fill { get => _fill; set => Set(ref _fill, value); }
         public string Label { get; set; }
-        public LanePart Lane { get; set; }    // edit back-reference
+        public bool IsManual { get; set; }    // pale-red status
+        public LanePart Lane { get; set; }
         public Col Column { get; set; }
     }
 
@@ -80,10 +79,13 @@ namespace CoilOptimizer.UI
     public class LayoutChangedEventArgs : EventArgs
     {
         public double TotalLength { get; set; }
+        public int ManualCutColumns { get; set; }
     }
 
     public class LayoutVM : ObservableObject
     {
+        private const double Eps = 0.0005;
+
         public ObservableCollection<LayoutShape> Shapes { get; } =
             new ObservableCollection<LayoutShape>();
         public ObservableCollection<LayoutLine> ShearLines { get; } =
@@ -91,19 +93,21 @@ namespace CoilOptimizer.UI
         public ObservableCollection<LayoutLine> SlitLines { get; } =
             new ObservableCollection<LayoutLine>();
 
-        // brushes
         public Brush FallOffBrush { get; set; } = new SolidColorBrush(Color.FromRgb(128, 128, 128));
         private readonly Brush _wheat = Freeze(Color.FromRgb(245, 222, 179));
-        private readonly Brush _selDark = Freeze(Color.FromRgb(200, 170, 120)); // darker wheat
-        private readonly Brush _magenta = Freeze(Color.FromRgb(250, 200, 250)); // pale magenta
+        private readonly Brush _selDark = Freeze(Color.FromRgb(200, 170, 120));
+        private readonly Brush _magenta = Freeze(Color.FromRgb(250, 200, 250));
+        private readonly Brush _paleRed = Freeze(Color.FromRgb(255, 200, 200));
         public Brush ShearBrush { get; set; } = Brushes.Red;
         public Brush SlitBrush { get; set; } = Brushes.Black;
-        public Brush GapBrush { get; set; } = new SolidColorBrush(Color.FromRgb(200, 255, 200)); // pale green
+        public Brush GapBrush { get; set; } = new SolidColorBrush(Color.FromRgb(200, 255, 200));
 
         public event EventHandler<LayoutChangedEventArgs> LayoutChanged;
 
         public ICommand ToggleScaleCommand { get; }
         public ICommand ToggleEditCommand { get; }
+
+        public int MaxKnives { get; set; } = 8;   // => MaxKnives + 1 strips
 
         private CuttingResult _result;
         private double _coilWidth, _totalLen = 1;
@@ -118,43 +122,37 @@ namespace CoilOptimizer.UI
         }
 
         private static Brush Freeze(Color c)
-        {
-            var b = new SolidColorBrush(c); b.Freeze(); return b;
-        }
+        { var b = new SolidColorBrush(c); b.Freeze(); return b; }
 
-        // base (inch) surface size
         private double _baseW, _baseH;
         public double BaseWidth { get => _baseW; private set => Set(ref _baseW, value); }
         public double BaseHeight { get => _baseH; private set => Set(ref _baseH, value); }
 
-        // transform (independent X/Y)
         private double _scaleX = 1, _scaleY = 1;
         public double ScaleX { get => _scaleX; private set { if (Set(ref _scaleX, value)) Raise(nameof(InvScaleX)); } }
         public double ScaleY { get => _scaleY; private set { if (Set(ref _scaleY, value)) Raise(nameof(InvScaleY)); } }
-
-        // inverse scale for constant-size text / strokes
         public double InvScaleX => _scaleX > 0 ? 1.0 / _scaleX : 1.0;
         public double InvScaleY => _scaleY > 0 ? 1.0 / _scaleY : 1.0;
 
-        private double _shearTh = 2, _slitTh = 1, _hairTh = 1;
+        private double _shearTh = 2, _slitTh = 0.5, _hairTh = 1;
         public double ShearThickness { get => _shearTh; private set => Set(ref _shearTh, value); }
         public double SlitThickness { get => _slitTh; private set => Set(ref _slitTh, value); }
         public double HairlineThickness { get => _hairTh; private set => Set(ref _hairTh, value); }
 
         private bool _scaleEnabled = true, _editMode;
+        // Toggle now just snaps the slider: ON => 1:1, OFF => fit.
         public bool ScaleEnabled
         {
             get => _scaleEnabled;
-            set { if (Set(ref _scaleEnabled, value)) { Raise(nameof(ZoomEnabled)); UpdateScale(); } }
+            set { if (Set(ref _scaleEnabled, value)) Zoom = value ? 1.0 : 0.0; }
         }
-        public bool ZoomEnabled => _scaleEnabled;
         public bool EditMode
         {
             get => _editMode;
-            set { if (Set(ref _editMode, value) && !value) { ClearSelection(); } }
+            set { if (Set(ref _editMode, value) && !value) ClearSelection(); }
         }
 
-        // zoom slider: 0 = fit whole length, 1 = true aspect (proportional to height)
+        // 0 = fit whole length, 1 = true aspect (proportional to height)
         private double _zoom = 0.0;
         public double Zoom
         {
@@ -164,7 +162,6 @@ namespace CoilOptimizer.UI
         public double ZoomMin => 0.0;
         public double ZoomMax => 1.0;
 
-        // gap (offcut) highlight
         private double _gx, _gy, _gw, _gh;
         private Visibility _gapVis = Visibility.Collapsed;
         private string _gapLabel;
@@ -190,7 +187,6 @@ namespace CoilOptimizer.UI
         {
             _cols = new List<Col>();
             if (_result == null) return;
-
             foreach (var p in _result.Patterns)
             {
                 var template = p.Parts
@@ -198,7 +194,6 @@ namespace CoilOptimizer.UI
                     .Select(part => new LanePart
                     { Width = (double)part.Width, Length = (double)part.Length })
                     .ToList();
-
                 for (int r = 0; r < Math.Max(1, p.Repeat); r++)
                 {
                     var col = new Col { Length = (double)p.Length };
@@ -215,13 +210,13 @@ namespace CoilOptimizer.UI
             UpdateScale();
         }
 
-        /// <summary>Builds geometry from the column model. Called on load / drop only.</summary>
         public void Rebuild()
         {
             Shapes.Clear(); ShearLines.Clear(); SlitLines.Clear();
             HideGap();
             if (_coilWidth <= 0 || _cols.Count == 0) { UpdateScale(); return; }
 
+            UpdateColumnFlags();
             _totalLen = _cols.Sum(c => c.Length);
             BaseWidth = _totalLen;
             BaseHeight = _coilWidth;
@@ -233,15 +228,16 @@ namespace CoilOptimizer.UI
                 for (int i = 0; i < col.Lanes.Count; i++)
                 {
                     var lane = col.Lanes[i];
+                    bool manual = col.LastIsManual && i == col.Lanes.Count - 1;
                     Shapes.Add(new LayoutShape
                     {
                         X = x,
                         Y = y,
                         Width = lane.Length,
                         Height = lane.Width,
-                        Fill = _wheat,
                         Lane = lane,
                         Column = col,
+                        IsManual = manual,
                         Label = $"{lane.Width:0.###} x {lane.Length:0.###}"
                     });
                     y += lane.Width;
@@ -249,30 +245,42 @@ namespace CoilOptimizer.UI
                         SlitLines.Add(new LayoutLine
                         { X1 = x, Y1 = y, X2 = x + col.Length, Y2 = y });
                 }
-                // shear at the left edge of each column
                 ShearLines.Add(new LayoutLine { X1 = x, Y1 = 0, X2 = x, Y2 = _coilWidth });
                 x += col.Length;
             }
-            // trailing shear
             ShearLines.Add(new LayoutLine { X1 = x, Y1 = 0, X2 = x, Y2 = _coilWidth });
 
             RefreshFills();
             UpdateScale();
         }
 
-        /// <summary>Only updates transform scalars. No object churn.</summary>
+        private void UpdateColumnFlags()
+        {
+            foreach (var col in _cols)
+            {
+                bool hasFallOff = col.UsedWidth < _coilWidth - Eps;
+                int knives = Math.Max(0, col.Lanes.Count - 1) + (hasFallOff ? 1 : 0);
+                col.LastIsManual = col.Lanes.Count > 0 && knives > MaxKnives;
+            }
+        }
+
+        private bool ColumnIsLocked(Col c)
+        {
+            bool hasFallOff = c.UsedWidth < _coilWidth - Eps;
+            int knives = Math.Max(0, c.Lanes.Count - 1) + (hasFallOff ? 1 : 0);
+            return knives > MaxKnives || c.Lanes.Count >= MaxKnives + 1;
+        }
+
         public void UpdateScale()
         {
             if (_coilWidth <= 0) return;
-
             ScaleY = _viewportH / _coilWidth;                 // ALWAYS fills height
             double fit = _totalLen > 0 ? _viewportW / _totalLen : ScaleY;
-            double aspect = ScaleY;                            // true 1:1
+            double aspect = ScaleY;
+            ScaleX = fit + (aspect - fit) * _zoom;            // slider always drives X
 
-            ScaleX = ScaleEnabled ? fit + (aspect - fit) * _zoom : fit;
-
-            ShearThickness = 2.0 / ScaleX;  // vertical line width is along X
-            SlitThickness = 1.0 / ScaleY;  // horizontal line height is along Y
+            ShearThickness = 2.0 / ScaleX;
+            SlitThickness = 1.0 / ScaleY;
             HairlineThickness = 1.0 / ScaleY;
         }
 
@@ -287,9 +295,7 @@ namespace CoilOptimizer.UI
 
         public void ClearSelection()
         {
-            _selected = null;
-            HideGap();
-            RefreshFills();
+            _selected = null; HideGap(); RefreshFills();
         }
 
         private void RefreshFills()
@@ -302,50 +308,39 @@ namespace CoilOptimizer.UI
                          Eq(s.Lane.Width, _selected.Width) &&
                          Eq(s.Lane.Length, _selected.Length))
                     s.Fill = _magenta;
+                else if (s.IsManual)
+                    s.Fill = _paleRed;
                 else
                     s.Fill = _wheat;
             }
         }
 
-        /// <summary>Click in gray space: find the offcut region and highlight it.</summary>
         public void SelectGapAt(double cx, double cy)
         {
-            _selected = null;
-            RefreshFills();
+            _selected = null; RefreshFills();
 
-            double x = 0;
-            Col target = null;
+            double x = 0; Col target = null;
             foreach (var col in _cols)
             {
                 if (cx >= x && cx < x + col.Length) { target = col; break; }
                 x += col.Length;
             }
+            if (target == null) { HideGap(); return; }
 
-            if (target == null)
-            {
-                HideGap();
-                return; // beyond layout (no trailing band modeled)
-            }
-
-            // vertical gap (unused width below the stacked lanes)
             double y = 0;
             foreach (var lane in target.Lanes)
             {
                 double laneEndX = x + lane.Length;
                 if (cy >= y && cy < y + lane.Width)
                 {
-                    if (cx > laneEndX) // gap to the right of a short (stacked) part
-                    {
+                    if (cx > laneEndX)
                         ShowGap(laneEndX, y, (x + target.Length) - laneEndX, lane.Width);
-                        return;
-                    }
-                    HideGap(); // clicked on a part region (shouldn't normally happen)
+                    else
+                        HideGap();
                     return;
                 }
                 y += lane.Width;
             }
-
-            // below all lanes => unused full-width offcut for this column
             if (cy >= y && cy <= _coilWidth)
                 ShowGap(x, y, target.Length, _coilWidth - y);
             else
@@ -354,7 +349,7 @@ namespace CoilOptimizer.UI
 
         private void ShowGap(double gx, double gy, double gw, double gh)
         {
-            if (gw <= 0 || gh <= 0) { HideGap(); return; }
+            if (gw <= Eps || gh <= Eps) { HideGap(); return; }
             GapX = gx; GapY = gy; GapW = gw; GapH = gh;
             GapLabel = $"{gh:0.###}\" x {gw:0.###}\"";
             GapVisibility = Visibility.Visible;
@@ -363,19 +358,12 @@ namespace CoilOptimizer.UI
 
         // ---------------- drop / edit ----------------
 
-        /// <summary>
-        /// Drop the dragged part. Uses its CENTER to pick the target column.
-        /// If it doesn't fit, a new column is created left/right of center.
-        /// </summary>
         public void DropPart(LayoutShape shape, double centerX, double centerY)
         {
-            const double eps = 0.0001;
             var lane = shape.Lane;
             var src = shape.Column;
-
             src.Lanes.Remove(lane);
 
-            // locate target column by center X (using current model, src lane removed)
             double x = 0; int ti = -1; double targetStart = 0;
             for (int i = 0; i < _cols.Count; i++)
             {
@@ -383,7 +371,8 @@ namespace CoilOptimizer.UI
                 { ti = i; targetStart = x; break; }
                 x += _cols[i].Length;
             }
-            if (ti < 0) // dropped past the end -> append new column
+
+            if (ti < 0)
             {
                 _cols.Add(new Col { Length = lane.Length, Lanes = { lane } });
                 Cleanup(); Commit(); return;
@@ -391,10 +380,12 @@ namespace CoilOptimizer.UI
 
             var target = _cols[ti];
             double avail = _coilWidth - target.UsedWidth;
+            bool fits = lane.Width <= avail + Eps
+                        && target.Lanes.Count < MaxKnives + 1
+                        && !ColumnIsLocked(target);
 
-            if (lane.Width <= avail + eps)
+            if (fits)
             {
-                // insert at lane index based on center Y
                 int idx = target.Lanes.Count; double y = 0;
                 for (int k = 0; k < target.Lanes.Count; k++)
                 {
@@ -405,7 +396,6 @@ namespace CoilOptimizer.UI
             }
             else
             {
-                // no room -> new column to the side the center favors
                 double colCenter = targetStart + target.Length / 2;
                 int insertAt = centerX < colCenter ? ti : ti + 1;
                 _cols.Insert(insertAt, new Col { Length = lane.Length, Lanes = { lane } });
@@ -418,12 +408,18 @@ namespace CoilOptimizer.UI
 
         private void Commit()
         {
+            foreach (var c in _cols)
+                if (c.Lanes.Count > 0) c.Length = c.Lanes.Max(l => l.Length);
+
             _selected = null;
             Rebuild();
-            LayoutChanged?.Invoke(this,
-                new LayoutChangedEventArgs { TotalLength = _totalLen });
+            LayoutChanged?.Invoke(this, new LayoutChangedEventArgs
+            {
+                TotalLength = _totalLen,
+                ManualCutColumns = _cols.Count(c => c.LastIsManual)
+            });
         }
 
-        private static bool Eq(double a, double b) => Math.Abs(a - b) < 0.0005;
+        private static bool Eq(double a, double b) => Math.Abs(a - b) < Eps;
     }
 }
